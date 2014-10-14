@@ -62,7 +62,7 @@ from .excluder import Excluder
 from .settings import wxSetting, HiddenSetting, StringSetting, SpinSetting, \
     FloatSpinSetting, BooleanSetting, StaticTextSetting
 from printrun import gcoder
-from .pronsole import REPORT_NONE, REPORT_POS, REPORT_TEMP
+from .pronsole import REPORT_NONE, REPORT_POS, REPORT_TEMP, REPORT_MANUAL
 
 class Tee(object):
     def __init__(self, target):
@@ -142,10 +142,6 @@ class PronterWindow(MainWindow, pronsole.pronsole):
 
         self.capture_skip = {}
         self.capture_skip_newline = False
-        self.userm114 = 0
-        self.userm105 = 0
-        self.m105_waitcycles = 0
-
         self.fgcode = None
         self.excluder = None
         self.slicep = None
@@ -660,19 +656,13 @@ class PronterWindow(MainWindow, pronsole.pronsole):
     def set_verbose_communications(self, e):
         self.p.loud = e.IsChecked()
 
-    def parseusercmd(self, line):
-        if line.upper().startswith("M114"):
-            self.userm114 += 1
-        elif line.upper().startswith("M105"):
-            self.userm105 += 1
-
     def sendline(self, e):
         command = self.commandbox.GetValue()
         if not len(command):
             return
         wx.CallAfter(self.addtexttolog, ">>> " + command + "\n")
-        self.parseusercmd(str(command))
-        self.onecmd(str(command))
+        line = self.precmd(str(command))
+        self.onecmd(line)
         self.commandbox.SetSelection(0, len(command))
         self.commandbox.history.append(command)
         self.commandbox.histindex = len(self.commandbox.history)
@@ -1662,26 +1652,18 @@ Printrun. If not, see <http://www.gnu.org/licenses/>."""
         if z is not None: self.current_pos[2] = z
 
     def recvcb(self, l):
-        isreport = False
         report_type = self.recvcb_report(l)
-        #isreport = report_type != REPORT_NONE
-        if report_type == REPORT_POS:
+        isreport = report_type != REPORT_NONE
+        if report_type & REPORT_POS:
             self.update_pos()
-            if self.userm114 > 0:
-                self.userm114 -= 1
-            else:
-                isreport = True
-        if report_type == REPORT_TEMP:
+        elif report_type & REPORT_TEMP:
             wx.CallAfter(self.tempdisp.SetLabel, self.tempreadings.strip().replace("ok ", ""))
             self.update_tempdisplay()
-            if self.userm105 > 0:
-                self.userm105 -= 1
-            else:
-                self.m105_waitcycles = 0
-                isreport = True
         tstring = l.rstrip()
-        if not self.p.loud and (tstring not in ["ok", "wait"] and not isreport):
-            wx.CallAfter(self.addtexttolog, tstring + "\n")
+        if not self.p.loud and (tstring not in ["ok", "wait"] and not isreport ):
+            wx.CallAfter(self.addtexttolog, tstring + "\n")			
+        elif report_type & REPORT_MANUAL:
+			wx.CallAfter(self.addtexttolog, tstring + "\n")			
         for listener in self.recvlisteners:
             listener(l)
 
@@ -2020,7 +2002,7 @@ Printrun. If not, see <http://www.gnu.org/licenses/>."""
                     return self.editbutton(e)
                 self.cur_button = e.GetEventObject().custombutton
             command = e.GetEventObject().properties.command
-            self.parseusercmd(command)
+            command = self.precmd(command)
             self.onecmd(command)
             self.cur_button = None
         except:
